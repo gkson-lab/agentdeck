@@ -54,7 +54,7 @@ npm run app      # desktop window
 npm start        # or: in your browser at http://localhost:4477
 ```
 
-Build installers yourself with `npm run dist:mac`, `npm run dist:win` or `npm run dist:linux` (output in `release/`). Each OS builds best on that OS. The **Desktop app** GitHub Actions workflow builds all three. Push a tag like `v0.1.1` and it publishes them as a release.
+Build installers yourself with `npm run dist:mac`, `npm run dist:win` or `npm run dist:linux` (output in `release/`). Each OS builds best on that OS. The **Desktop app** GitHub Actions workflow builds all three on every push to `main` (download them from the run's Artifacts). When you publish a GitHub release, it attaches the installers to that release.
 
 ### Cloud · Managed Agents setup (optional)
 
