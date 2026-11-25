@@ -1,8 +1,9 @@
 name: Desktop app
 
-# Builds the installers for macOS, Windows and Linux.
-# - Every push to main: installers are attached to the workflow run (Actions tab → run → Artifacts).
-# - Publishing a GitHub release (or pushing a v* tag): installers are added to that release.
+# Builds the installers for macOS, Windows and Linux and publishes them as a GitHub release.
+# - Every push to main: makes (or updates) the release v<version from package.json>.
+#   Bump "version" in package.json to cut a new release.
+# - Publishing a release by hand, or pushing a v* tag: attaches the installers to that release.
 on:
   push:
     branches: [main]
@@ -13,6 +14,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -47,16 +52,47 @@ jobs:
 
   release:
     name: Publish release
-    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - name: Pick the release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "name=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=v$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/download-artifact@v4
         with:
           path: out
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          name: agentdeck ${{ steps.tag.outputs.name }}
           files: out/*
-          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
+          overwrite_files: true
+          make_latest: true
+          body: |
+            ## Download
+
+            | Your computer | File |
+            |---|---|
+            | Mac with Apple silicon (M1 and later) | `agentdeck-*-mac-arm64.dmg` |
+            | Mac with Intel | `agentdeck-*-mac-x64.dmg` |
+            | Windows | `agentdeck-*-win-x64.exe` (ARM PCs: `-arm64.exe`) |
+            | Linux | `agentdeck-*-linux-x86_64.AppImage` or `agentdeck-*-linux-amd64.deb` |
+
+            You also need [Claude Code](https://code.claude.com) installed (the `claude` command); agentdeck uses it to sign you in and run agents.
+
+            **First launch** (the app isn't signed with an Apple or Microsoft certificate yet):
+            - **macOS:** if it says the app can't be opened, go to System Settings → Privacy & Security → **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/agentdeck.app`.
+            - **Windows:** on the SmartScreen prompt, click **More info → Run anyway**.
+            - **Linux:** `chmod +x agentdeck-*.AppImage`, then run it; or `sudo apt install ./agentdeck-*.deb`.
           generate_release_notes: true
