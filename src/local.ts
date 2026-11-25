@@ -10,7 +10,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { CLAUDE_BIN } from "./claude.js";
+import { spawnClaude } from "./cli.js";
 import { agentDefs, type AgentDef } from "./roster.js";
 import { log, node, touch } from "./store.js";
 import type { AgentNode, QueuedMessage, Run } from "./types.js";
@@ -44,11 +44,24 @@ export function talkLocal(run: Run, msg: QueuedMessage) {
   void runTurn(run, msg);
 }
 
+/** Stop every agent this app started on this computer (used when the desktop app quits). */
+export function stopAllLocal() {
+  for (const [, p] of procs) {
+    if (p.pid && process.platform === "win32") spawn("taskkill", ["/pid", String(p.pid), "/T", "/F"], { windowsHide: true }).on("error", () => {});
+    else p.kill("SIGINT");
+  }
+}
+
 export function stopLocal(run: Run) {
   run.queue = [];
   const p = procs.get(run.id);
-  if (p) p.kill("SIGINT");
-  setTimeout(() => procs.get(run.id)?.kill("SIGKILL"), 4000);
+  if (p?.pid && process.platform === "win32") {
+    // On Windows the CLI can sit behind cmd.exe; end the whole process tree.
+    spawn("taskkill", ["/pid", String(p.pid), "/T", "/F"], { windowsHide: true }).on("error", () => {});
+  } else if (p) {
+    p.kill("SIGINT");
+    setTimeout(() => procs.get(run.id)?.kill("SIGKILL"), 4000);
+  }
   run.status = "stopped";
   for (const n of run.nodes) if (n.status === "running" || n.status === "queued") n.status = "stopped";
   touch(run);
@@ -96,9 +109,10 @@ async function runTurn(run: Run, msg: QueuedMessage) {
 
   let child: ChildProcess;
   try {
-    child = spawn(CLAUDE_BIN, args, { cwd: run.cwd, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
+    child = spawnClaude(args, { cwd: run.cwd, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
   } catch (e) {
-    return fail(run, `Could not start claude: ${String(e)}`);
+    procs.delete(run.id);
+    return fail(run, (e as Error).message);
   }
   procs.set(run.id, child);
   child.stdin!.end(prompt); // prompt on stdin, so text that starts with "-" is never read as a flag

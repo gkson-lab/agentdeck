@@ -257,3 +257,9 @@ input:focus, select:focus, textarea:focus, .btn:focus-visible, .run-item:focus-v
   .pick input { width: 100%; }
   .pick { flex: 1 1 140px; }
 }
+
+/* ---------- desktop app (macOS hides the title bar; leave room for the window buttons and a drag strip) ---------- */
+.desktop-darwin .sidebar { padding-top: 46px; }
+.desktop-darwin .main .view { padding-top: 46px; }
+.desktop-darwin body::before { content: ""; position: fixed; top: 0; left: 0; right: 0; height: 36px; -webkit-app-region: drag; z-index: 50; }
+.desktop-darwin .gate { padding-top: 46px; }

@@ -9,7 +9,6 @@ import { confirmManaged, consoleStatus, startManaged, stopManaged, talkManaged }
 import { agentDefs } from "./roster.js";
 import type { NewRunRequest, Run, TalkRequest } from "./types.js";
 
-const PORT = Number(process.env.PORT ?? 4477);
 const HOST = "127.0.0.1"; // local only: this server can start agents on your computer
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const MIME: Record<string, string> = {
@@ -24,7 +23,7 @@ const MODELS = /^[a-z0-9][a-z0-9.\-[\]]{0,63}$/i;
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const PERMISSION_MODES = new Set(["default", "acceptEdits", "plan", "auto", "bypassPermissions"]);
 
-const allowedHosts = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+const allowedHosts = new Set<string>();
 
 /** Blocks other websites (and DNS-rebinding tricks) from driving this local server. */
 function trusted(req: IncomingMessage) {
@@ -74,6 +73,7 @@ async function createRun(r: NewRunRequest): Promise<Run> {
     const permissionMode = clean(r.permissionMode, 32) || "acceptEdits";
     if (!PERMISSION_MODES.has(permissionMode)) throw new Error("Unknown permission mode.");
     const agent = clean(r.agent, 64);
+    if (agent && !/^[\w.-]+$/.test(agent)) throw new Error("That agent name doesn't look right.");
     const run = newRun({ kind: "local", title, prompt, cwd, model, effort, agent: agent || undefined, permissionMode });
     addRun(run);
     talkLocal(run, { text: prompt, nodeId: "root", model, effort });
@@ -235,6 +235,33 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`\n  agentdeck is running → http://localhost:${PORT}\n`);
-});
+function listen(port: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const onError = (e: NodeJS.ErrnoException) => {
+      server.off("listening", onListening);
+      reject(e);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      const addr = server.address();
+      resolve(typeof addr === "object" && addr ? addr.port : port);
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, HOST);
+  });
+}
+
+/** Start the server on 127.0.0.1. Uses `port` if it's free, otherwise any free port. Returns the port. */
+export async function start(port = Number(process.env.PORT ?? 4477)): Promise<number> {
+  let actual: number;
+  try {
+    actual = await listen(port);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE") throw e;
+    actual = await listen(0);
+  }
+  allowedHosts.add(`127.0.0.1:${actual}`);
+  allowedHosts.add(`localhost:${actual}`);
+  return actual;
+}

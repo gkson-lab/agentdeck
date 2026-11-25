@@ -1,18 +1,10 @@
 /** Thin wrappers around the official `claude` CLI: sign-in, status, the agents on this machine, and cloud hand-off. */
-import { execFile, spawn } from "node:child_process";
-import { platform } from "node:os";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { platform, tmpdir } from "node:os";
+import { join } from "node:path";
+import { claudeCommand, runClaude, spawnClaude } from "./cli.js";
 import { bus } from "./store.js";
-
-export const CLAUDE_BIN = process.env.CLAUDE_BIN ?? "claude";
-
-function run(args: string[], timeoutMs = 15000): Promise<{ stdout: string; stderr: string; code: number }> {
-  return new Promise((resolve) => {
-    execFile(CLAUDE_BIN, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
-      const code = err ? ((err as NodeJS.ErrnoException & { code?: number | string }).code === "ENOENT" ? 127 : 1) : 0;
-      resolve({ stdout: String(stdout), stderr: String(stderr), code });
-    });
-  });
-}
 
 export interface ClaudeAuth {
   installed: boolean;
@@ -21,11 +13,10 @@ export interface ClaudeAuth {
   email?: string;
   orgName?: string;
   subscriptionType?: string;
-  raw?: Record<string, unknown>;
 }
 
 export async function claudeAuthStatus(): Promise<ClaudeAuth> {
-  const r = await run(["auth", "status", "--json"]);
+  const r = await runClaude(["auth", "status", "--json"]);
   if (r.code === 127) return { installed: false, loggedIn: false };
   try {
     const j = JSON.parse(r.stdout) as Record<string, unknown>;
@@ -36,14 +27,13 @@ export async function claudeAuthStatus(): Promise<ClaudeAuth> {
       email: (j.email ?? j.emailAddress) as string | undefined,
       orgName: (j.orgName ?? j.organizationName) as string | undefined,
       subscriptionType: j.subscriptionType as string | undefined,
-      raw: j,
     };
   } catch {
     return { installed: true, loggedIn: false };
   }
 }
 
-let loginProc: ReturnType<typeof spawn> | undefined;
+let loginProc: ChildProcess | undefined;
 
 /**
  * Starts Claude Code's own sign-in (`claude auth login`), which opens claude.ai in your browser.
@@ -51,10 +41,14 @@ let loginProc: ReturnType<typeof spawn> | undefined;
  */
 export function startLogin(method: "claudeai" | "console") {
   if (loginProc && loginProc.exitCode === null) return { started: false, message: "A sign-in is already in progress." };
-  loginProc = spawn(CLAUDE_BIN, ["auth", "login", method === "console" ? "--console" : "--claudeai"], {
-    stdio: ["pipe", "pipe", "pipe"],
-    env: process.env,
-  });
+  try {
+    loginProc = spawnClaude(["auth", "login", method === "console" ? "--console" : "--claudeai"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: process.env,
+    });
+  } catch (e) {
+    return { started: false, message: (e as Error).message };
+  }
   const forward = (b: Buffer) => {
     // Pass the CLI's output (the sign-in URL, prompts) to the UI, without terminal escape codes.
     const text = b.toString().replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
@@ -75,12 +69,12 @@ export function sendLoginCode(code: string) {
 }
 
 export async function logout() {
-  return run(["auth", "logout"]);
+  return runClaude(["auth", "logout"]);
 }
 
 /** Every Claude Code session on this computer (interactive, background, and ones agentdeck started). */
 export async function machineAgents() {
-  const r = await run(["agents", "--json", "--all"], 20000);
+  const r = await runClaude(["agents", "--json", "--all"], 20000);
   if (r.code === 127) return { installed: false, sessions: [] };
   try {
     return { installed: true, sessions: JSON.parse(r.stdout) as unknown[] };
@@ -91,37 +85,62 @@ export async function machineAgents() {
 
 const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
+function has(cmd: string) {
+  try {
+    execFileSync(platform() === "win32" ? "where" : "which", [cmd], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function detached(cmd: string, args: string[]) {
+  const p = spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: false });
+  p.on("error", () => {});
+  p.unref();
+}
+
 /**
  * A new Claude Code cloud session (claude.ai/code) can only be created from an interactive terminal,
- * so this opens one running `claude --cloud "<task>"`. Returns the command so the UI can show it too.
+ * so this opens one running `claude --cloud "<task>"`. The task goes through a temp file, so no
+ * character in it can be read by a shell as a command.
  */
 export function openCloudInTerminal(task: string, cwd: string): { opened: boolean; command: string; message?: string } {
-  const command = `cd ${shq(cwd)} && ${CLAUDE_BIN} --cloud ${shq(task)}`;
   const os = platform();
-  try {
-    if (os === "darwin") {
-      const as = command.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      spawn("osascript", ["-e", `tell application "Terminal" to do script "${as}"`, "-e", 'tell application "Terminal" to activate'], {
-        detached: true,
-        stdio: "ignore",
-      }).unref();
-      return { opened: true, command };
-    }
-    if (os === "linux") {
-      spawn("x-terminal-emulator", ["-e", "bash", "-lc", command + "; exec bash"], { detached: true, stdio: "ignore" })
-        .on("error", () => {})
-        .unref();
-      return { opened: true, command, message: "If no terminal opened, run the command yourself." };
-    }
-    if (os === "win32") {
-      spawn("cmd.exe", ["/c", "start", "cmd", "/k", `cd /d "${cwd}" && claude --cloud "${task.replace(/"/g, "'")}"`], {
-        detached: true,
-        stdio: "ignore",
-      }).unref();
-      return { opened: true, command };
-    }
-  } catch {
-    /* fall through */
+  const claude = claudeCommand()?.cmd ?? "claude";
+  const dir = mkdtempSync(join(tmpdir(), "agentdeck-"));
+  const taskFile = join(dir, "task.txt");
+  writeFileSync(taskFile, task, { mode: 0o600 });
+
+  if (os === "win32") {
+    const ps = (s: string) => `'${s.replace(/'/g, "''")}'`;
+    const command = `Set-Location -LiteralPath ${ps(cwd)}; & ${ps(claude)} --cloud (Get-Content -Raw -LiteralPath ${ps(taskFile)})`;
+    detached("cmd.exe", ["/c", "start", "agentdeck", "powershell.exe", "-NoExit", "-NoProfile", "-Command", command]);
+    return { opened: true, command: `claude --cloud "<your task>"  (in ${cwd})` };
   }
-  return { opened: false, command, message: "Couldn't open a terminal here. Run the command yourself." };
+
+  const command = `cd ${shq(cwd)} && ${shq(claude)} --cloud "$(cat ${shq(taskFile)})"`;
+  if (os === "darwin") {
+    const as = command.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    detached("osascript", ["-e", `tell application "Terminal" to do script "${as}"`, "-e", 'tell application "Terminal" to activate']);
+    return { opened: true, command };
+  }
+
+  const keep = `${command}; exec "\${SHELL:-bash}"`;
+  const terminals: [string, string[]][] = [
+    ["x-terminal-emulator", ["-e", "bash", "-lc", keep]],
+    ["gnome-terminal", ["--", "bash", "-lc", keep]],
+    ["konsole", ["-e", "bash", "-lc", keep]],
+    ["xfce4-terminal", ["-x", "bash", "-lc", keep]],
+    ["kitty", ["bash", "-lc", keep]],
+    ["alacritty", ["-e", "bash", "-lc", keep]],
+    ["xterm", ["-e", "bash", "-lc", keep]],
+  ];
+  for (const [bin, args] of terminals) {
+    if (has(bin)) {
+      detached(bin, args);
+      return { opened: true, command };
+    }
+  }
+  return { opened: false, command, message: "Couldn't find a terminal app. Run this yourself:" };
 }

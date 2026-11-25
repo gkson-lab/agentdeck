@@ -14,8 +14,8 @@
       <h1 class="serif">Sign in to agentdeck</h1>
       <p class="muted">agentdeck runs agents with your Claude account. It uses Claude Code's own sign-in, so your password and token never pass through this app.</p>
       <div id="gate-missing" class="notice" hidden>
-        The <code>claude</code> command isn't installed. Install Claude Code, then reload:
-        <pre>curl -fsSL https://claude.ai/install.sh | bash</pre>
+        The <code>claude</code> command isn't installed. Install Claude Code from a terminal, then click "I've signed in":
+        <pre id="install-cmd">curl -fsSL https://claude.ai/install.sh | bash</pre>
       </div>
       <button id="login-claude" class="btn primary big">Sign in with Claude</button>
       <button id="login-console" class="btn ghost">Use an Anthropic Console account instead</button>

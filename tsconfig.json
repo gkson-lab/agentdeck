@@ -4,9 +4,14 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
-    "noEmit": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "outDir": "dist",
+    "rootDir": "src"
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

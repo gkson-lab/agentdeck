@@ -1,6 +1,6 @@
 # agentdeck
 
-A local dashboard for your Claude agents. Sign in with your Claude account, start an agent on this computer or in the cloud, and watch every subagent it spawns work in **its own chamber**. Each chamber shows the agent's model and effort and has a box for talking to that agent directly.
+A desktop app (macOS, Windows, Linux) for your Claude agents. Sign in with your Claude account, start an agent on this computer or in the cloud, and watch every subagent it spawns work in **its own chamber**. Each chamber shows the agent's model and effort and has a box for talking to that agent directly.
 
 A small pixel mascot does the work everywhere: it types while an agent runs, waves when one needs you, hops when it's done, and naps when nothing is going on.
 
@@ -23,18 +23,38 @@ A small pixel mascot does the work everywhere: it types while an agent runs, wav
 - **Subagent roster.** Built-in subagents plus yours (`~/.claude/agents`) and the project's (`.claude/agents`), with their model and effort. You can start any of them as the main agent.
 - **This computer.** Every Claude Code session running on the machine, from `claude agents --json`.
 
-## Run it
+## Install the app
 
-Needs Node 20+ and [Claude Code](https://code.claude.com) (`claude` on your PATH).
+Download the installer for your computer from [Releases](https://github.com/gkson-lab/agentdeck/releases):
+
+| OS | File |
+|---|---|
+| macOS (Apple silicon) | `agentdeck-<version>-mac-arm64.dmg` |
+| macOS (Intel) | `agentdeck-<version>-mac-x64.dmg` |
+| Windows | `agentdeck-<version>-win-x64.exe` (or `-arm64.exe`) |
+| Linux | `agentdeck-<version>-linux-x86_64.AppImage`, or the `.deb` |
+
+agentdeck needs [Claude Code](https://code.claude.com) installed, because it uses the `claude` command for sign-in and local agents. The app finds it even when you open agentdeck from the Dock, Start menu or app launcher.
+
+The builds aren't signed with an Apple or Microsoft certificate yet, so the first launch needs one extra step:
+
+- **macOS:** open the app once. If macOS says it can't be opened, go to System Settings → Privacy & Security, then click **Open Anyway**. Or run `xattr -dr com.apple.quarantine /Applications/agentdeck.app`.
+- **Windows:** if SmartScreen appears, click **More info → Run anyway**.
+- **Linux:** run `chmod +x agentdeck-*.AppImage` and start it, or install the `.deb` with `sudo apt install ./agentdeck-*.deb`.
+
+## Run from source
+
+Needs Node 20+ and Claude Code.
 
 ```bash
-git clone <this repo> agentdeck
+git clone https://github.com/gkson-lab/agentdeck
 cd agentdeck
 npm install
-npm start
+npm run app      # desktop window
+npm start        # or: in your browser at http://localhost:4477
 ```
 
-Open <http://localhost:4477>. Set `PORT` to use another port.
+Build installers yourself with `npm run dist:mac`, `npm run dist:win` or `npm run dist:linux` (output in `release/`). Each OS builds best on that OS. The **Desktop app** GitHub Actions workflow builds all three. Push a tag like `v0.1.1` and it publishes them as a release.
 
 ### Cloud · Managed Agents setup (optional)
 
@@ -43,7 +63,7 @@ Managed Agents is billed to an Anthropic Console organization, separately from a
 ## How it works
 
 ```
-browser ──HTTP/SSE──▶ agentdeck server (127.0.0.1 only)
+desktop window / browser ──HTTP/SSE──▶ agentdeck server (127.0.0.1 only, runs inside the app)
                         ├─ claude -p --output-format stream-json   (local agents)
                         ├─ claude auth / agents / --cloud          (sign-in, machine view, claude.ai hand-off)
                         └─ @anthropic-ai/sdk  beta.sessions         (Managed Agents)
@@ -65,6 +85,8 @@ browser ──HTTP/SSE──▶ agentdeck server (127.0.0.1 only)
 
 | Command | What it does |
 |---|---|
-| `npm start` | Start the server |
-| `npm run dev` | Start with auto-reload |
+| `npm run app` | Open the desktop app |
+| `npm start` | Run in your browser at http://localhost:4477 |
+| `npm run dev` | Browser mode with auto-reload |
+| `npm run dist:mac` / `dist:win` / `dist:linux` | Build installers into `release/` |
 | `npm run typecheck` | Type-check the server |

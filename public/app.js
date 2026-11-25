@@ -507,14 +507,15 @@ function wanderer(stage, scale) {
   const m = mascot("walk", scale);
   m.classList.add("wanderer");
   stage.append(m);
-  let x = 20;
+  let x = 0;
   const acts = ["work", "think", "wave", "sleep", "idle", "done"];
   const step = () => {
     const width = stage.clientWidth - 12 * scale;
     if (width <= 0) return setTimeout(step, 1000);
-    const to = Math.round(Math.random() * width);
+    // Move in whole sprite pixels (steps), never through fractional positions that would smear the art.
+    const to = Math.round((Math.random() * width) / scale) * scale;
     const dist = Math.abs(to - x);
-    m.style.transition = `transform ${dist * 18}ms linear`;
+    m.style.transition = `transform ${dist * 18}ms steps(${Math.max(1, Math.round(dist / scale))}, end)`;
     m.classList.toggle("flip", to < x);
     setPose(m, "walk");
     m.style.transform = `translateX(${to}px)`;
@@ -531,6 +532,9 @@ function wanderer(stage, scale) {
 
 async function main() {
   setFavicon();
+  const desktop = new URLSearchParams(location.search).get("desktop");
+  if (desktop) document.documentElement.classList.add("desktop", "desktop-" + desktop);
+  if (/Win/i.test(navigator.platform)) $("#install-cmd").textContent = "irm https://claude.ai/install.ps1 | iex";
   $("#brand-mascot").append(mascot("idle", 3, "agentdeck"));
   setupGate();
   setupComposer();
